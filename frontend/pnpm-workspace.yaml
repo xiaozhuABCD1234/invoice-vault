@@ -1,0 +1,3 @@
+# pnpm 11 构建脚本白名单：vue-echarts 依赖 vue-demi 的 postinstall。
+allowBuilds:
+  vue-demi: true
