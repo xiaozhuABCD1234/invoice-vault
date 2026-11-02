@@ -23,7 +23,7 @@
 | 框架 | Vue 3.5 + TypeScript（strict）+ Vite | 只用 `<script setup lang="ts">` 与 Composition API |
 | 样式 | Tailwind CSS v4（CSS-first，`@theme` 定义 token） | 不生成 `tailwind.config.js`；不用 CSS-in-JS |
 | 组件 | Reka UI + shadcn-vue（复制进仓库，代码归项目所有） | 只此一套；组件放 `src/components/ui` |
-| 图标 | `lucide-vue-next` | 统一 16 / 18 / 20px，stroke 1.75；禁止 emoji 当图标 |
+| 图标 | `@lucide/vue`（lucide 官方 Vue 包；`lucide-vue-next` 已被 npm 弃用） | 统一 16 / 18 / 20px，stroke 1.75；禁止 emoji 当图标 |
 | 路由 | Vue Router 4 | 路由级权限用 `meta.requiresAuth` / `meta.roles` |
 | 全局状态 | Pinia | 只放登录态、当前用户、UI 偏好；服务端数据用组合式函数 |
 | 图表 | ECharts 5 + vue-echarts | 按需引入，禁止 3D 图表 |
@@ -318,4 +318,4 @@ frontend/src/
 
 | 日期 | 页面/组件 | 例外内容 | 原因 | 批准人 |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| 2026-11-03 | 全局 | 图标包使用 `@lucide/vue` 替代 `lucide-vue-next` | `lucide-vue-next` 已被 npm 标记弃用，官方提示迁移到 `@lucide/vue`；同一图标体系，不构成第二套图标库 | 架构决策 |
