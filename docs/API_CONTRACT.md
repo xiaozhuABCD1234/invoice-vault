@@ -61,6 +61,9 @@ body: `{ "username": "string", "password": "string" }`
 
 User: `{ id, username, display_name, role, is_active, created_at, last_login_at }`
 
+### GET /users/options
+所有登录用户可用（表单选择申购人/负责人）：返回 `{ items: [{ id, display_name, role, is_active }] }`，只含展示必需字段。
+
 ### 用户管理（admin）
 - `GET /users?page&page_size&q&role&is_active` → 分页 User
 - `POST /users` body `{ username, display_name, password, role }` → 201 User
@@ -79,7 +82,7 @@ Category: `{ id, name, kind, sort_order, is_active }`
 
 ## 3. 文档与文件
 
-Document: `{ id, doc_type, title, owner_user_id, current_version: DocumentVersion, created_at, deleted_at }`
+Document: `{ id, doc_type, title, owner_user_id, owner_name, current_version: DocumentVersion, created_at, deleted_at }`
 DocumentVersion: `{ id, version_no, original_name, display_name, mime_type, size_bytes, sha256, created_at, is_latest }`
 
 - `POST /documents`（multipart：`file`、`doc_type`、`title?`）→ 201
@@ -98,7 +101,7 @@ DocumentVersion: `{ id, version_no, original_name, display_name, mime_type, size
 
 ## 4. 抽取任务
 
-Job: `{ id, document_id, provider, model, prompt_version, status, attempts, confidence, parsed, validation, error_code, error_message, queued_at, started_at, finished_at, reviewed_by, reviewed_at, review_decision, review_note }`
+Job: `{ id, document_id, document_name, document_doc_type, provider, model, prompt_version, status, attempts, confidence, parsed, validation, error_code, error_message, queued_at, started_at, finished_at, reviewed_by, reviewed_at, review_decision, review_note }`
 `parsed`：规范化后的候选字段（见第 5 节 InvoiceCreate 结构的大驼峰 camelCase 版本，金额仍为分）。
 `validation`：`{ "errors": string[], "warnings": string[], "field_confidence": { "field": 0.0 } }`
 
@@ -119,7 +122,8 @@ Invoice（响应）：
   "issue_date": "2026-07-12", "seller_name": "店铺", "seller_tax_id": null,
   "buyer_name": null, "buyer_tax_id": null,
   "amount_ex_tax_cents": 10000, "tax_cents": 1300, "total_cents": 11300, "tax_rate_bp": 1300,
-  "currency": "CNY", "category_id": 1, "requester_id": 2, "owner_id": 2,
+  "currency": "CNY", "category_id": 1, "category_name": "标准件",
+  "requester_id": 2, "requester_name": "杨泽", "owner_id": 2, "owner_name": "杨泽",
   "invoice_form": "electronic", "status": "active",
   "paid_cents": 0, "payment_status": "unpaid",
   "source_document_id": 3, "extraction_job_id": 4,
@@ -148,6 +152,7 @@ InvoiceItemInput: `{ name, quantity, unit_price_millis, amount_cents, note?, sor
 
 Payment 响应：
 `{ id, amount_cents, paid_at, payer_user_id, payer_name, method, external_txn_ref, evidence_document_id, status, requested_at, confirmed_by, confirmed_at, note, created_by, created_at, allocated_cents, allocations: Allocation[] }`
+说明：`allocated_cents` 为 active allocation 合计；列表不返回 allocations，详情返回。
 Allocation: `{ id, payment_id, invoice_id, amount_cents, status, note, created_by, created_at, updated_at }`
 
 - `GET /payments?page&page_size&q&status&method&date_from&date_to`
