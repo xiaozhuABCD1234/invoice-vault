@@ -445,6 +445,9 @@ export interface Allocation {
   created_by: number
   created_at: string
   updated_at: string
+  /** 付款详情响应可选内联的发票摘要；缺省时前端按 invoice_id 补取。 */
+  invoice_number?: string | null
+  invoice_seller_name?: string | null
 }
 
 export interface Payment {
@@ -472,6 +475,8 @@ export interface PaymentListQuery extends PageQuery {
   method?: PaymentMethod
   date_from?: string
   date_to?: string
+  /** 服务端排序，格式 "字段:顺序"（如 paid_at:desc）。 */
+  sort?: string
 }
 
 export interface PaymentCreate {
@@ -568,6 +573,7 @@ export interface ReconciliationIssueListQuery {
   page?: number
   page_size?: number
   type?: ReconciliationIssueType
+  include_ignored?: boolean
 }
 
 export interface IgnoreIssueRequest {
