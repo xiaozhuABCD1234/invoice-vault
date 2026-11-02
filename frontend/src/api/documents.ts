@@ -11,14 +11,19 @@ import type {
 
 export function listDocuments(
   query: DocumentListQuery = {},
+  signal?: AbortSignal,
 ): Promise<Page<Document>> {
   return request<Page<Document>>('/documents', {
     query: toQueryParams(query),
+    signal,
   })
 }
 
-export function getDocument(id: number): Promise<DocumentDetail> {
-  return request<DocumentDetail>(`/documents/${id}`)
+export function getDocument(
+  id: number,
+  signal?: AbortSignal,
+): Promise<DocumentDetail> {
+  return request<DocumentDetail>(`/documents/${id}`, { signal })
 }
 
 export function uploadDocument(

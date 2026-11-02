@@ -11,14 +11,19 @@ import type {
 
 export function listExtractionJobs(
   query: ExtractionJobListQuery = {},
+  signal?: AbortSignal,
 ): Promise<Page<ExtractionJob>> {
   return request<Page<ExtractionJob>>('/extraction-jobs', {
     query: toQueryParams(query),
+    signal,
   })
 }
 
-export function getExtractionJob(id: number): Promise<ExtractionJobDetail> {
-  return request<ExtractionJobDetail>(`/extraction-jobs/${id}`)
+export function getExtractionJob(
+  id: number,
+  signal?: AbortSignal,
+): Promise<ExtractionJobDetail> {
+  return request<ExtractionJobDetail>(`/extraction-jobs/${id}`, { signal })
 }
 
 export function retryExtractionJob(id: number): Promise<ExtractionJob> {
