@@ -204,6 +204,40 @@ def test_approve_job_invalid_payload_leaves_job_pending(
     assert _invoice_count(db_session, "APV-4001") == 0
 
 
+def test_approve_deleted_document_returns_409(
+    admin_client: TestClient,
+    user_client: TestClient,
+    db_session: Session,
+    normal_user,
+    settings,
+):
+    document = make_document(db_session, settings, owner=normal_user)
+    job = make_job(db_session, document=document)
+    payload = invoice_payload(
+        db_session, number="APV-DELETED", requester=normal_user, owner=normal_user
+    )
+
+    assert admin_client.delete(f"/api/v1/documents/{document.id}").status_code == 204
+
+    response = user_client.post(
+        f"/api/v1/extraction-jobs/{job.id}/approve", json=payload
+    )
+    assert response.status_code == 409
+    body = response.json()
+    assert body["code"] == "document_deleted"
+    assert body["details"]["document_id"] == document.id
+
+    db_session.expire_all()
+    stored_job = db_session.get(ExtractionJob, job.id)
+    assert stored_job is not None
+    assert stored_job.status == "review_pending"
+    assert stored_job.reviewed_by is None
+    assert stored_job.reviewed_at is None
+    assert stored_job.review_decision is None
+    assert _invoice_count(db_session, "APV-DELETED") == 0
+    assert "job.approve" not in audit_actions(db_session)
+
+
 def test_approve_requires_login_and_known_job(
     client: TestClient, user_client: TestClient, db_session: Session
 ):
