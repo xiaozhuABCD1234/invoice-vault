@@ -19,6 +19,7 @@
 { "items": [], "total": 0, "page": 1, "page_size": 20 }
 ```
 query：`page`（默认 1）、`page_size`（默认 20，最大 100）、`q`（模糊搜索，按各接口说明）。
+支持排序的列表统一用 `sort="字段:asc|desc"` 单值格式，例如 `sort=issue_date:desc`；字段白名单与默认值见各接口说明。
 
 ### 0.3 错误
 ```json
@@ -94,7 +95,7 @@ DocumentVersion: `{ id, version_no, original_name, display_name, mime_type, size
 - `GET /documents/{id}` → `{ document, version_count, extraction_jobs: Job[] }`
 - `GET /documents/{id}/preview?version=latest` → 二进制，`Content-Disposition: inline`，正确 Content-Type。user/admin 均可，仅最新版；admin 可传 version_id。
 - `GET /documents/{id}/download?version=latest`（admin）→ `attachment; filename*=UTF-8''...`，文件名带扩展名。
-- `POST /documents/{id}/versions`（multipart file）→ 201 Document；sha256 相同则不新增。
+- `POST /documents/{id}/versions`（multipart file）→ 新建 201、sha256 已存在 200 复用，均返回 Document；不新增版本。
 - `DELETE /documents/{id}`（admin，软删）→ 204；文件不物理删除。
 
 写审计：document.create / document.upload_version / document.preview / document.download / document.delete。
@@ -110,7 +111,7 @@ Job: `{ id, document_id, document_name, document_doc_type, provider, model, prom
 - `POST /extraction-jobs/{id}/retry` → 202 Job（queued，attempts 保留；超过 3 次 409）
 - `POST /extraction-jobs/{id}/approve` body = InvoiceCreate（见 5.1，必须含 items）→ 201 `{ invoice, job }`
   - 仅 status=review_pending 可 approve；发票号码重复 409；审核人 user 只能审自己上传的文档。
-  - 审核通过：创建 invoice + items（active），job=approved，回填 reviewed_by/at/decision。
+  - 审核通过：创建 invoice + items（active），job=approved，回填 reviewed_by/at/decision；同时把源文档当前版本 display_name 更新为规范名（金额-人员-商户-类别-文档类型.扩展名）。
 - `POST /extraction-jobs/{id}/reject` body `{ "note": "string" }` → 200 Job（rejected）。
 
 ## 5. 发票
@@ -143,7 +144,8 @@ Invoice（响应）：
 - invoice_number 全局唯一（含已删除/作废）：409。
 InvoiceItemInput: `{ name, quantity, unit_price_millis, amount_cents, note?, sort_order? }`
 
-- `GET /invoices` query：`page, page_size, q, status, payment_status, category_id, requester_id, owner_id, date_from, date_to, sort`
+- `GET /invoices` query：`page, page_size, q, status, payment_status, category_id, requester_id, owner_id, date_from, date_to, sort, include_deleted`
+  `sort` 白名单：`issue_date`、`total_cents`、`created_at`、`id`；默认 `issue_date:desc`，非法值回退默认。默认排除软删；admin 可传 `include_deleted=true`。
 - `GET /invoices/{id}`
 - `PATCH /invoices/{id}`：InvoiceCreate 的可选字段 + `status?`；修改金额后重算 payment_status，并校验 active 分配合计 ≤ 新金额，否则 409。
 - `DELETE /invoices/{id}`（admin）→ 204 软删；存在 active allocation 时 409。
@@ -155,7 +157,8 @@ Payment 响应：
 说明：`allocated_cents` 为 active allocation 合计；列表不返回 allocations，详情返回。
 Allocation: `{ id, payment_id, invoice_id, amount_cents, status, note, created_by, created_at, updated_at }`
 
-- `GET /payments?page&page_size&q&status&method&date_from&date_to`
+- `GET /payments?page&page_size&q&status&method&date_from&date_to&sort`
+  `sort` 白名单：`paid_at`、`amount_cents`、`created_at`、`id`；默认 `paid_at:desc`。
 - `POST /payments` body `{ amount_cents, paid_at, payer_user_id?, payer_name?, method, external_txn_ref?, evidence_document_id?, requested_at?, note? }` → 201 Payment
   - `method != teacher_advance` 且无 evidence_document_id：允许，但对账产生"缺凭证"异常。
 - `GET /payments/{id}`（含 allocations 与发票摘要）
@@ -202,7 +205,8 @@ ReportTemplate: `{ id, name, columns, filters, sort, created_by, is_shared, crea
 - `GET /exports/{id}` → ExportJob
 - `GET /exports/{id}/download` → xlsx 附件（创建者或 admin；过期 24h 后 410）
 
-ExportJob: `{ id, template_id, status, file_document_id, error_message, created_at, expires_at, download_url }`
+ExportJob: `{ id, template_id, status, file_document_id, file_name, error_message, created_at, expires_at, download_url }`
+本版导出为同步生成：`POST /exports` 返回 202 时 status 已为 `succeeded` 或 `failed`。
 xlsx 要求：金额写数字、日期写日期格式、冻结表头、合计行；文本防公式注入；默认模板 16 列见 DESIGN §10。
 
 ## 9. 仪表盘
@@ -221,6 +225,7 @@ xlsx 要求：金额写数字、日期写日期格式、冻结表头、合计行
 ## 10. 审计日志（admin）
 
 AuditLog: `{ id, actor_id, actor_name, action, entity_type, entity_id, before, after, ip, user_agent, created_at }`
+`entity_id` 为字符串（兼容数字 ID 与对账 issue_key）。
 - `GET /audit-logs?page&page_size&action&entity_type&entity_id&actor_id&date_from&date_to`
 
 ## 11. 前端路由 ↔ 接口对应
