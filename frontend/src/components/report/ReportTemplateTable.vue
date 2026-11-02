@@ -67,7 +67,7 @@ const columns: DataTableColumn[] = [
 
     <template #cell-created_by="{ row }">
       <span class="whitespace-nowrap text-text-secondary">
-        用户 #{{ row.created_by }}
+        {{ row.id === 0 ? '内置' : row.created_by ? `用户 #${row.created_by}` : '—' }}
       </span>
     </template>
 

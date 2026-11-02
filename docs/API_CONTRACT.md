@@ -89,13 +89,13 @@ DocumentVersion: `{ id, version_no, original_name, display_name, mime_type, size
 - `POST /documents`（multipart：`file`、`doc_type`、`title?`）→ 201
   `{ "document": Document, "extraction_job": Job | null }`
   - doc_type=invoice 时自动入队抽取任务；其余为 null。
-  - 同 sha256 已存在：返回 200 同结构，`reused=true`，不新建版本。
+  - 同 sha256 已存在：返回 200 同结构，`reused=true`，不新建版本；若所属文档已软删则 409 `document_deleted`。
   - 限制：pdf/jpg/jpeg/png/webp；单文件 ≤ 20MB；校验 magic bytes；文件名只作展示。
 - `GET /documents?page&page_size&doc_type&q` → 分页 Document
 - `GET /documents/{id}` → `{ document, version_count, extraction_jobs: Job[] }`
 - `GET /documents/{id}/preview?version=latest` → 二进制，`Content-Disposition: inline`，正确 Content-Type。user/admin 均可，仅最新版；admin 可传 version_id。
 - `GET /documents/{id}/download?version=latest`（admin）→ `attachment; filename*=UTF-8''...`，文件名带扩展名。
-- `POST /documents/{id}/versions`（multipart file）→ 新建 201、sha256 已存在 200 复用，均返回 Document；不新增版本。
+- `POST /documents/{id}/versions`（multipart file）→ 新建 201、sha256 已存在 200 复用，均返回 Document；不新增版本。仅 admin 或文档 owner/created_by 可操作（否则 403）；文档软删后 404。
 - `DELETE /documents/{id}`（admin，软删）→ 204；文件不物理删除。
 
 写审计：document.create / document.upload_version / document.preview / document.download / document.delete。
@@ -110,7 +110,7 @@ Job: `{ id, document_id, document_name, document_doc_type, provider, model, prom
 - `GET /extraction-jobs/{id}` → `{ job, document, diff: object | null }`（diff = 与上一次审核/抽取结果的字段差异）
 - `POST /extraction-jobs/{id}/retry` → 202 Job（queued，attempts 保留；超过 3 次 409）
 - `POST /extraction-jobs/{id}/approve` body = InvoiceCreate（见 5.1，必须含 items）→ 201 `{ invoice, job }`
-  - 仅 status=review_pending 可 approve；发票号码重复 409；审核人 user 只能审自己上传的文档。
+  - 仅 status=review_pending 可 approve；发票号码重复 409；审核人 user 只能审自己上传的文档；源文档已软删 409 `document_deleted`。
   - 审核通过：创建 invoice + items（active），job=approved，回填 reviewed_by/at/decision；同时把源文档当前版本 display_name 更新为规范名（金额-人员-商户-类别-文档类型.扩展名）。
 - `POST /extraction-jobs/{id}/reject` body `{ "note": "string" }` → 200 Job（rejected）。
 
