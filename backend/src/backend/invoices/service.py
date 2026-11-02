@@ -680,6 +680,13 @@ def approve_extraction_job(
             "document_not_found", "文档不存在", {"document_id": job.document_id}
         )
 
+    if document.deleted_at is not None:
+        raise ConflictError(
+            "document_deleted",
+            "文档已删除，无法审核通过",
+            {"document_id": document.id},
+        )
+
     if not is_admin and actor.id not in {
         document.owner_user_id,
         document.created_by,
