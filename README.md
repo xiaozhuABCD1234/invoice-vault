@@ -65,7 +65,7 @@ Vite 将 `/api` 代理到 `http://127.0.0.1:8000`。登录页使用上面创建�
 ### 测试与构建
 
 ```bash
-cd backend && uv run pytest -q          # 202 个测试
+cd backend && uv run pytest -q          # 210 个测试
 cd frontend && pnpm test && pnpm build  # 单测 + 类型检查 + 生产构建
 ```
 
