@@ -72,6 +72,15 @@ class Settings(BaseSettings):
             return [item.strip() for item in text.split(",") if item.strip()]
         return value
 
+    @field_validator("jwt_secret")
+    @classmethod
+    def _validate_jwt_secret(cls, value: str) -> str:
+        if len(value) < 32:
+            raise ValueError(
+                "IV_JWT_SECRET 长度至少 32 个字符，请使用足够长的随机字符串"
+            )
+        return value
+
     @property
     def access_token_seconds(self) -> int:
         return self.access_token_minutes * 60
