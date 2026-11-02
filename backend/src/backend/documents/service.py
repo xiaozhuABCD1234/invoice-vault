@@ -22,11 +22,11 @@ from ..shared.enums import DocumentType, Role
 from ..shared.errors import BadRequestError, ForbiddenError, NotFoundError
 from ..shared.pagination import paginate
 from ..shared.storage import resolve_path, sanitize_filename, save_bytes
-from . import files
+from . import files, naming
 
 DISPLAY_PREFIX = "待识别"
 LATEST = "latest"
-_DOCUMENT_EXTENSIONS = {"pdf", "jpg", "jpeg", "png", "webp"}
+_DOCUMENT_EXTENSIONS = naming.DOCUMENT_EXTENSIONS
 _INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f\x7f]')
 
 
@@ -340,13 +340,7 @@ def _version_path(version: DocumentVersion, settings: Any) -> Path:
 
 
 def _actual_extension(version: DocumentVersion) -> str:
-    suffix = Path(version.storage_key or "").suffix.lstrip(".").lower()
-    if suffix in _DOCUMENT_EXTENSIONS:
-        return "jpg" if suffix == "jpeg" else suffix
-    by_mime = files.extension_for_mime(version.mime_type)
-    if by_mime:
-        return by_mime
-    return suffix or "bin"
+    return naming.version_extension(version)
 
 
 def _media_type(version: DocumentVersion) -> str:
