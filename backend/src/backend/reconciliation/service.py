@@ -37,6 +37,26 @@ ACTIVE_INVOICE = InvoiceStatus.ACTIVE.value
 VOID_INVOICE = InvoiceStatus.VOID.value
 DUPLICATE_INVOICE = InvoiceStatus.DUPLICATE.value
 
+_METHOD_LABELS: dict[str, str] = {
+    PaymentMethod.PERSONAL_ADVANCE.value: "个人垫付",
+    PaymentMethod.TEACHER_ADVANCE.value: "老师代付",
+    PaymentMethod.BANK_TRANSFER.value: "银行转账",
+    PaymentMethod.ALIPAY.value: "支付宝",
+    PaymentMethod.WECHAT.value: "微信",
+    PaymentMethod.CARD.value: "银行卡",
+    PaymentMethod.CASH.value: "现金",
+    PaymentMethod.OTHER.value: "其他",
+}
+
+
+def _yuan(cents: int | None) -> str:
+    """整数分 → 人民币展示文本，避免浮点误差。"""
+
+    value = int(cents or 0)
+    sign = "-" if value < 0 else ""
+    absolute = abs(value)
+    return f"{sign}¥{absolute // 100:,}.{absolute % 100:02d}"
+
 _SEVERITY: dict[ReconciliationIssueType, IssueSeverity] = {
     ReconciliationIssueType.INVOICE_UNPAID: IssueSeverity.ERROR,
     ReconciliationIssueType.INVOICE_PARTIAL: IssueSeverity.WARNING,
@@ -122,7 +142,7 @@ def collect_issues(db: Session) -> list[ReconciliationIssue]:
                     title="发票未付款",
                     detail=(
                         f"发票 {invoice.invoice_number}（{invoice.seller_name}）"
-                        f"尚未分配任何付款，价税合计 {total} 分"
+                        f"尚未分配任何付款，价税合计 {_yuan(total)}"
                     ),
                     amount_cents=total,
                 )
@@ -135,8 +155,8 @@ def collect_issues(db: Session) -> list[ReconciliationIssue]:
                     invoice.id,
                     title="发票部分付款",
                     detail=(
-                        f"发票 {invoice.invoice_number} 已分配 {paid} 分，"
-                        f"尚差 {total - paid} 分"
+                        f"发票 {invoice.invoice_number} 已分配 {_yuan(paid)}，"
+                        f"尚差 {_yuan(total - paid)}"
                     ),
                     amount_cents=total - paid,
                 )
@@ -149,8 +169,8 @@ def collect_issues(db: Session) -> list[ReconciliationIssue]:
                     invoice.id,
                     title="发票分配超额",
                     detail=(
-                        f"发票 {invoice.invoice_number} 已分配 {paid} 分，"
-                        f"超过价税合计 {total} 分"
+                        f"发票 {invoice.invoice_number} 已分配 {_yuan(paid)}，"
+                        f"超过价税合计 {_yuan(total)}"
                     ),
                     amount_cents=paid - total,
                 )
@@ -166,8 +186,8 @@ def collect_issues(db: Session) -> list[ReconciliationIssue]:
                     invoice.id,
                     title="发票明细合计不一致",
                     detail=(
-                        f"发票 {invoice.invoice_number} 明细合计 {items_total} 分，"
-                        f"价税合计 {total} 分，差额 {diff} 分"
+                        f"发票 {invoice.invoice_number} 明细合计 {_yuan(items_total)}，"
+                        f"价税合计 {_yuan(total)}，差额 {_yuan(diff)}"
                     ),
                     amount_cents=diff,
                 )
@@ -186,7 +206,7 @@ def collect_issues(db: Session) -> list[ReconciliationIssue]:
                     "payment",
                     payment.id,
                     title="付款未分配",
-                    detail=f"付款 #{payment.id} 金额 {amount} 分尚未分配到任何发票",
+                    detail=f"付款 #{payment.id} 金额 {_yuan(amount)} 尚未分配到任何发票",
                     amount_cents=amount,
                 )
             )
@@ -198,8 +218,8 @@ def collect_issues(db: Session) -> list[ReconciliationIssue]:
                     payment.id,
                     title="付款部分分配",
                     detail=(
-                        f"付款 #{payment.id} 已分配 {allocated} 分，"
-                        f"尚余 {amount - allocated} 分未分配"
+                        f"付款 #{payment.id} 已分配 {_yuan(allocated)}，"
+                        f"尚余 {_yuan(amount - allocated)} 未分配"
                     ),
                     amount_cents=amount - allocated,
                 )
@@ -212,8 +232,8 @@ def collect_issues(db: Session) -> list[ReconciliationIssue]:
                     payment.id,
                     title="付款分配超额",
                     detail=(
-                        f"付款 #{payment.id} 已分配 {allocated} 分，"
-                        f"超过付款金额 {amount} 分"
+                        f"付款 #{payment.id} 已分配 {_yuan(allocated)}，"
+                        f"超过付款金额 {_yuan(amount)}"
                     ),
                     amount_cents=allocated - amount,
                 )
@@ -229,8 +249,8 @@ def collect_issues(db: Session) -> list[ReconciliationIssue]:
                     payment.id,
                     title="付款缺少凭证",
                     detail=(
-                        f"付款 #{payment.id}（{payment.method}）未上传付款凭证；"
-                        "老师代付不要求凭证"
+                        f"付款 #{payment.id}（{_METHOD_LABELS.get(payment.method, payment.method)}）"
+                        "未上传付款凭证"
                     ),
                     amount_cents=amount,
                 )
