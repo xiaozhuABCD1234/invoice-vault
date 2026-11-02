@@ -5,7 +5,6 @@ from __future__ import annotations
 from urllib.parse import unquote
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
 from backend.models.document import Document, DocumentVersion
 

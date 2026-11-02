@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
 from backend import worker
 from backend.extraction import service as extraction_service
