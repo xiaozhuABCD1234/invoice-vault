@@ -630,6 +630,8 @@ export interface ExportJob {
   created_at: string
   expires_at: string
   download_url: string | null
+  /** 后端生成的可读文件名；旧响应可能缺省，前端按「发票导出-{id}.xlsx」回退。 */
+  file_name?: string | null
 }
 
 export interface ExportCreate {
