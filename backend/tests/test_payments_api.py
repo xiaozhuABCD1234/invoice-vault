@@ -557,6 +557,12 @@ def test_payment_and_allocation_permissions(
 
         forbidden_delete = other.delete(f"/api/v1/allocations/{allocation['id']}")
         assert forbidden_delete.status_code == 403
+
+        forbidden_allocation_update = other.patch(
+            f"/api/v1/allocations/{allocation['id']}", json={"amount_cents": 3000}
+        )
+        assert forbidden_allocation_update.status_code == 403
+        assert forbidden_allocation_update.json()["code"] == "forbidden"
     finally:
         other.close()
 
@@ -571,6 +577,12 @@ def test_payment_and_allocation_permissions(
     )
     assert admin_update.status_code == 200
     assert admin_update.json()["note"] == "管理员修改"
+
+    owner_allocation_update = user_client.patch(
+        f"/api/v1/allocations/{allocation['id']}", json={"amount_cents": 3000}
+    )
+    assert owner_allocation_update.status_code == 200, owner_allocation_update.text
+    assert owner_allocation_update.json()["amount_cents"] == 3000
 
     owner_delete = user_client.delete(f"/api/v1/allocations/{allocation['id']}")
     assert owner_delete.status_code == 204

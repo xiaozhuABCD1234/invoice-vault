@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..shared.config import Settings, get_settings
+from ..shared.config import ENV_FILE, Settings, get_settings
 from ..shared.enums import ExtractionProvider
 
 AUTO_PROVIDER = "auto"
@@ -91,13 +91,44 @@ class ExtractionConfig:
         return replace(self, **changes)
 
 
+def _dotenv_values() -> dict[str, str]:
+    """读取 backend/.env（与 Settings 使用同一文件），让复制 .env.example 后直接生效。
+
+    python-dotenv 由 pydantic-settings 依赖提供，无需新增依赖；文件不存在或解析失败
+    时静默跳过，保持环境变量优先。
+    """
+
+    if not ENV_FILE.is_file():
+        return {}
+    try:
+        from dotenv import dotenv_values
+    except ImportError:  # pragma: no cover - pydantic-settings 已依赖 python-dotenv
+        return {}
+    try:
+        values = dotenv_values(ENV_FILE)
+    except (OSError, ValueError):  # 配置格式错误时不要阻断进程启动
+        return {}
+    return {key: value for key, value in values.items() if value is not None}
+
+
+def _environment(environ: Mapping[str, str] | None) -> Mapping[str, str]:
+    """环境变量优先；未显式传入 mapping 时用 backend/.env 补齐缺失项。"""
+
+    if environ is not None:
+        return dict(environ)
+    env: dict[str, str] = dict(os.environ)
+    for key, value in _dotenv_values().items():
+        env.setdefault(key, value)
+    return env
+
+
 def load_config(
     environ: Mapping[str, str] | None = None,
     settings: Settings | None = None,
 ) -> ExtractionConfig:
-    """从环境变量读取配置；每次调用重新读取，便于测试 monkeypatch。"""
+    """从环境变量（含 backend/.env）读取配置；每次调用重新读取，便于测试 monkeypatch。"""
 
-    env = os.environ if environ is None else environ
+    env = _environment(environ)
     raw_provider = (env.get("IV_EXTRACTION_PROVIDER") or DEFAULT_PROVIDER).strip().lower()
     provider = raw_provider if raw_provider in ALLOWED_PROVIDERS else DEFAULT_PROVIDER
 

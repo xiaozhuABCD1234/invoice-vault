@@ -15,6 +15,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from ..documents import naming
 from ..models.category import Category
 from ..models.document import Document
 from ..models.extraction import ExtractionJob
@@ -642,6 +643,20 @@ def delete_invoice(
     _commit(db, invoice.invoice_number)
 
 
+def _apply_canonical_display_name(
+    document: Document, invoice: Invoice
+) -> None:
+    """审核通过后把当前版本展示名改成规范名（不改 original_name / 版本号 / storage_key）。
+
+    不单独 flush：由 approve 的同一事务统一提交，任何一步失败都整体回滚。
+    """
+
+    version = document.current_version
+    if version is None:
+        return
+    version.display_name = naming.build_for_invoice(invoice, version)
+
+
 def approve_extraction_job(
     db: Session,
     job_id: int,
@@ -694,6 +709,7 @@ def approve_extraction_job(
     job.reviewed_by = actor.id
     job.reviewed_at = now
     job.review_decision = ReviewDecision.APPROVED.value
+    _apply_canonical_display_name(document, invoice)
     db.flush()
 
     record_audit(

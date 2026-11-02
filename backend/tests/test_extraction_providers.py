@@ -428,3 +428,44 @@ def test_provider_chain_failure_raises_provider_failed(tmp_path):
         )
     assert exc_info.value.code == "provider_failed"
     assert "paddleocr_local" in exc_info.value.message
+
+
+def test_load_config_reads_backend_dotenv(monkeypatch, tmp_path, settings):
+    """复制 .env.example 为 backend/.env 后，识别配置应直接生效。"""
+
+    from backend.extraction import config as config_module
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "IV_EXTRACTION_PROVIDER=mock\n"
+        "IV_EXTRACTION_MAX_ATTEMPTS=5\n"
+        "IV_EXTRACTION_HTTP_TIMEOUT=2.5\n"
+        "IV_LLM_ENABLED=true\n",
+        encoding="utf-8",
+    )
+    for key in (
+        "IV_EXTRACTION_PROVIDER",
+        "IV_EXTRACTION_MAX_ATTEMPTS",
+        "IV_EXTRACTION_HTTP_TIMEOUT",
+        "IV_LLM_ENABLED",
+        "IV_EXTRACTION_AUTO_CHAIN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(config_module, "ENV_FILE", env_file)
+
+    config = config_module.load_config(settings=settings)
+    assert config.provider == "mock"
+    assert config.max_attempts == 5
+    assert config.http_timeout == 2.5
+    assert config.llm_enabled is True
+
+    # 真实环境变量优先于 .env
+    monkeypatch.setenv("IV_EXTRACTION_PROVIDER", "auto")
+    assert config_module.load_config(settings=settings).provider == "auto"
+
+    # 显式传入 environ 时完全不读 .env
+    explicit = config_module.load_config(
+        environ={"IV_EXTRACTION_PROVIDER": "pdf_text"}, settings=settings
+    )
+    assert explicit.provider == "pdf_text"
+    assert explicit.max_attempts == 3

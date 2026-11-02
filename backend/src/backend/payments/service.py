@@ -561,7 +561,7 @@ def update_allocation(
     amount_cents: int | None = None,
     note: str | None = None,
     note_provided: bool = False,
-    actor_id: int | None,
+    actor: User,
     request: Any = None,
 ) -> PaymentAllocation:
     allocation = get_allocation_or_404(db, allocation_id)
@@ -574,6 +574,16 @@ def update_allocation(
     invoice = allocation.invoice or db.get(Invoice, allocation.invoice_id)
     if payment is None or invoice is None:
         raise NotFoundError("allocation_target_missing", "分配关联的付款或发票不存在")
+
+    # 与撤销一致：管理员、分配创建人或付款创建人可以修改分配金额。
+    if (
+        not is_admin(actor)
+        and allocation.created_by != actor.id
+        and payment.created_by != actor.id
+    ):
+        raise ForbiddenError(
+            "forbidden", "只有管理员、分配创建人或付款创建人可以修改该分配"
+        )
 
     before = allocation_snapshot(allocation)
 
@@ -593,7 +603,7 @@ def update_allocation(
     recompute_payment_and_invoice(db, payment, invoice)
     record_audit(
         db,
-        actor_id,
+        actor.id,
         "allocation.update",
         "allocation",
         allocation.id,

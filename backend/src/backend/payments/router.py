@@ -166,7 +166,7 @@ def update_allocation(
         amount_cents=updates.get("amount_cents"),
         note=updates.get("note"),
         note_provided="note" in updates,
-        actor_id=current_user.id,
+        actor=current_user,
         request=ctx,
     )
     return AllocationOut.model_validate(allocation)
