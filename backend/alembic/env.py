@@ -21,6 +21,14 @@ config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"
 target_metadata = Base.metadata
 
 
+def render_item(type_, obj, autogen_context):
+    """自定义 UTC 时间类型在迁移中落地为普通 DateTime。"""
+
+    if type_ == "type" and obj.__class__.__name__ == "UTCDateTime":
+        return "sa.DateTime()"
+    return False
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=settings.database_url,
@@ -29,6 +37,7 @@ def run_migrations_offline() -> None:
         dialect_opts={"paramstyle": "named"},
         render_as_batch=True,
         compare_type=True,
+        render_item=render_item,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -43,6 +52,7 @@ def run_migrations_online() -> None:
             render_as_batch=connection.dialect.name == "sqlite",
             compare_type=True,
             compare_server_default=True,
+            render_item=render_item,
         )
         with context.begin_transaction():
             context.run_migrations()
