@@ -182,6 +182,22 @@ def test_upload_dedupes_by_sha256(admin_client, user_client):
     assert listing.json()["total"] == 1
 
 
+def test_upload_same_sha_after_soft_delete_returns_409(user_client, admin_client):
+    first = upload_document(user_client)
+    assert first.status_code == 201, first.text
+    document_id = first.json()["document"]["id"]
+    assert admin_client.delete(f"/api/v1/documents/{document_id}").status_code == 204
+
+    repeated = upload_document(user_client)
+    assert repeated.status_code == 409, repeated.text
+    body = repeated.json()
+    assert body["code"] == "document_deleted"
+    assert "文档已删除" in body["message"]
+    assert "联系管理员" in body["message"]
+    assert body["details"]["document_id"] == document_id
+    assert body["details"]["sha256"]
+
+
 def test_upload_sanitizes_display_filename(user_client):
     response = upload_document(
         user_client,

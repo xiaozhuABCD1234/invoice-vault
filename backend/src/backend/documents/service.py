@@ -19,7 +19,7 @@ from ..models.user import User
 from ..shared.audit import record_audit
 from ..shared.db import utcnow
 from ..shared.enums import DocumentType, Role
-from ..shared.errors import BadRequestError, ForbiddenError, NotFoundError
+from ..shared.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from ..shared.pagination import paginate
 from ..shared.storage import resolve_path, sanitize_filename, save_bytes
 from . import files, naming
@@ -130,6 +130,15 @@ def create_document(
     existing = _find_version_by_sha(db, saved["sha256"])
     if existing is not None:
         document = existing.document
+        if document is None or document.deleted_at is not None:
+            raise ConflictError(
+                "document_deleted",
+                "文件已存在但文档已删除，请联系管理员",
+                {
+                    "sha256": saved["sha256"],
+                    "document_id": existing.document_id,
+                },
+            )
         job = latest_job_for_document(db, document.id)
         if (
             job is None
@@ -253,6 +262,19 @@ def get_document_or_404(
     if document is None:
         raise NotFoundError("document_not_found", "文档不存在")
     if document.deleted_at is not None and (viewer is None or not is_admin(viewer)):
+        raise NotFoundError("document_not_found", "文档不存在")
+    return document
+
+
+def get_active_document_or_404(db: Session, document_id: int) -> Document:
+    """取未软删文档；写操作（上传新版本）对已删文档统一 404，admin 也不例外。"""
+
+    document = db.scalar(
+        select(Document)
+        .options(*_document_options())
+        .where(Document.id == document_id)
+    )
+    if document is None or document.deleted_at is not None:
         raise NotFoundError("document_not_found", "文档不存在")
     return document
 
@@ -479,7 +501,13 @@ def upload_version(
 ) -> tuple[Document, bool]:
     """新增版本；sha256 已存在则复用已有版本/文档，返回 (document, reused)。"""
 
-    document = get_document_or_404(db, document_id, viewer=actor)
+    document = get_active_document_or_404(db, document_id)
+    if not is_admin(actor) and actor.id not in {
+        document.owner_user_id,
+        document.created_by,
+    }:
+        raise ForbiddenError("forbidden", "只能为自己负责的文档上传新版本")
+
     detected = files.validate_upload(
         data,
         filename=filename,
@@ -490,7 +518,17 @@ def upload_version(
 
     existing = _find_version_by_sha(db, saved["sha256"])
     if existing is not None:
-        return existing.document, True
+        existing_document = existing.document
+        if existing_document is None or existing_document.deleted_at is not None:
+            raise ConflictError(
+                "document_deleted",
+                "文件已存在但文档已删除，请联系管理员",
+                {
+                    "sha256": saved["sha256"],
+                    "document_id": existing.document_id,
+                },
+            )
+        return existing_document, True
 
     max_no = db.scalar(
         select(func.max(DocumentVersion.version_no)).where(

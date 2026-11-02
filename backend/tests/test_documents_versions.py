@@ -35,6 +35,16 @@ def upload_version(
     )
 
 
+def _login(app, username: str, password: str) -> TestClient:
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/auth/login", json={"username": username, "password": password}
+    )
+    assert response.status_code == 200, response.text
+    client.headers["Authorization"] = f"Bearer {response.json()['access_token']}"
+    return client
+
+
 def test_upload_version_switches_latest_and_current(user_client, db_session):
     document = upload_document(user_client).json()["document"]
     first_version_id = document["current_version"]["id"]
@@ -113,6 +123,71 @@ def test_upload_version_validates_file_type(user_client):
     )
     assert disguised.status_code == 400
     assert disguised.json()["code"] == "invalid_file_type"
+
+
+def test_upload_version_requires_owner_or_admin(app, user_client, admin_client, make_user):
+    document = upload_document(user_client).json()["document"]
+    make_user("outsider", "路人", password="outsider-pass-123")
+    other = _login(app, "outsider", "outsider-pass-123")
+    try:
+        denied = upload_version(
+            other, document["id"], content=PNG_BYTES, filename="v2.png"
+        )
+        assert denied.status_code == 403, denied.text
+        assert denied.json()["code"] == "forbidden"
+    finally:
+        other.close()
+
+    allowed = upload_version(
+        admin_client, document["id"], content=PNG_BYTES, filename="v2.png"
+    )
+    assert allowed.status_code == 201, allowed.text
+    assert allowed.json()["current_version"]["version_no"] == 2
+
+
+def test_upload_version_deleted_document_returns_404_for_admin(
+    user_client, admin_client
+):
+    document = upload_document(user_client).json()["document"]
+    assert admin_client.delete(f"/api/v1/documents/{document['id']}").status_code == 204
+
+    admin_response = upload_version(
+        admin_client, document["id"], content=PNG_BYTES, filename="v2.png"
+    )
+    assert admin_response.status_code == 404
+    assert admin_response.json()["code"] == "document_not_found"
+
+    user_response = upload_version(
+        user_client, document["id"], content=PNG_BYTES, filename="v2.png"
+    )
+    assert user_response.status_code == 404
+
+
+def test_upload_version_sha_from_deleted_document_returns_409(
+    user_client, admin_client
+):
+    first = upload_document(user_client).json()["document"]
+    second = upload_document(
+        user_client, content=PDF_BYTES + b"\n% second\n", filename="second.pdf"
+    ).json()["document"]
+    assert admin_client.delete(f"/api/v1/documents/{first['id']}").status_code == 204
+
+    response = upload_version(
+        user_client,
+        second["id"],
+        content=PDF_BYTES,
+        filename="reuse.pdf",
+        content_type="application/pdf",
+    )
+    assert response.status_code == 409
+    body = response.json()
+    assert body["code"] == "document_deleted"
+    assert "文档已删除" in body["message"]
+    assert "联系管理员" in body["message"]
+    assert body["details"]["document_id"] == first["id"]
+
+    detail = user_client.get(f"/api/v1/documents/{second['id']}").json()
+    assert detail["version_count"] == 1
 
 
 def test_version_upload_and_delete_permissions(client, user_client, admin_client):
