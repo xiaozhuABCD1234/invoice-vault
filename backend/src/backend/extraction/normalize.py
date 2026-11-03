@@ -423,7 +423,9 @@ def validate_parsed(
     if total is None:
         errors.append("缺少价税合计")
     elif int(total) < 0:
-        errors.append("价税合计不能为负数")
+        errors.append(
+            "价税合计不能为负数（红冲/退款票暂不支持，请人工处理或驳回）"
+        )
     if amount_ex_tax is not None and int(amount_ex_tax) < 0:
         errors.append("不含税金额不能为负数")
     if tax is not None and int(tax) < 0:

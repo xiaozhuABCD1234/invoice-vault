@@ -35,7 +35,7 @@ def _read_password(provided: str | None) -> str | None:
     if provided:
         return provided
     try:
-        first = getpass.getpass("请输入密码（至少 8 位）: ")
+        first = getpass.getpass("请输入密码: ")
         second = getpass.getpass("请再次输入密码: ")
     except (EOFError, KeyboardInterrupt):  # pragma: no cover - 交互终端
         return None
@@ -62,8 +62,7 @@ def _create_admin(args: argparse.Namespace) -> int:
         print("密码不能为空", file=sys.stderr)
         return 2
     if len(password) < 8:
-        print("密码至少 8 位", file=sys.stderr)
-        return 2
+        print("警告：密码少于 8 位，仅建议本地开发使用", file=sys.stderr)
     display_name = (args.display_name or username).strip() or username
 
     factory = _open_session()

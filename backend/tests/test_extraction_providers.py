@@ -109,6 +109,120 @@ def test_pdf_text_provider_success_and_empty(monkeypatch, tmp_path):
     assert exc_info.value.code == "pdf_text_unavailable"
 
 
+RAILWAY_TEXT = """电子发票（铁路电子客票）
+开票日期:2026年10月21日
+发票号码:26329330497000028545
+购买方名称:          上海电力大学
+统一社会信用代码:31011042500631X
+票价:     ￥  -66.00
+"""
+
+
+class LayoutPage:
+    def __init__(self, plain: str, layout: str) -> None:
+        self._plain = plain
+        self._layout = layout
+
+    def extract_text(self, *, extraction_mode=None):
+        return self._layout if extraction_mode == "layout" else self._plain
+
+
+class LayoutReader:
+    def __init__(self, _path: str) -> None:
+        self.pages = [
+            LayoutPage(
+                "发票号码:26329330497000028545\n"
+                "开票日期:2026年10月21日\n"
+                "购买方名称:上海电力大学",
+                RAILWAY_TEXT,
+            )
+        ]
+
+
+def test_parse_invoice_text_reads_railway_fare():
+    fields = parse_invoice_text(RAILWAY_TEXT)
+    assert fields["invoice_number"] == "26329330497000028545"
+    assert fields["issue_date"] == "2026-10-21"
+    assert fields["buyer_name"] == "上海电力大学"
+    assert fields["buyer_tax_id"] == "31011042500631X"
+    assert fields["invoice_type"] == "电子发票(铁路电子客票)"
+    assert fields["total_cents"] == -6600
+
+
+def test_parse_invoice_text_attributes_party_tax_ids():
+    text = (
+        "购买方信息 名称：测试购方 纳税人识别号：91320200MA1TEST002\n"
+        "销售方信息 名称：测试商户 纳税人识别号：91320200MA1TEST001"
+    )
+    fields = parse_invoice_text(text)
+    assert fields["buyer_tax_id"] == "91320200MA1TEST002"
+    assert fields["seller_tax_id"] == "91320200MA1TEST001"
+
+
+def test_pdf_text_provider_falls_back_to_layout(monkeypatch, tmp_path):
+    import pypdf
+
+    monkeypatch.setattr(pypdf, "PdfReader", LayoutReader)
+    config = ExtractionConfig(upload_dir=tmp_path)
+    result = providers.PdfTextProvider().extract(
+        None, SimpleNamespace(storage_key="x.pdf"), config, path=_pdf_path(tmp_path)
+    )
+    assert result.fields["total_cents"] == -6600
+    assert result.fields["invoice_number"] == "26329330497000028545"
+    assert "票价" in result.raw_text
+
+
+def test_http_post_json_sends_explicit_user_agent(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    def fake_urlopen(request, timeout=None):
+        captured["user_agent"] = request.get_header("User-agent")
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(providers.urllib.request, "urlopen", fake_urlopen)
+    assert providers._http_post_json("https://example.test/chat", b"{}", timeout=3) == {
+        "ok": True
+    }
+    assert captured["user_agent"] == providers.USER_AGENT
+    assert captured["timeout"] == 3
+
+
+def test_font_descriptors_ignores_malformed_descendants():
+    assert providers._font_descriptors({"/DescendantFonts": [object()]}) == []
+
+
+def test_relax_font_descriptors_keeps_one_font_file():
+    descriptor = {
+        "/Type": "/FontDescriptor",
+        "/FontFile2": object(),
+        "/FontFile3": object(),
+    }
+    font = {"/Subtype": "/Type0", "/DescendantFonts": [{"/FontDescriptor": descriptor}]}
+    page = SimpleNamespace(
+        get=lambda key, default=None: {"/Resources": {"/Font": {"/F1": font}}}.get(
+            key, default
+        )
+    )
+    reader = SimpleNamespace(pages=[page])
+
+    assert providers._relax_font_descriptors(reader) == 1
+    assert "/FontFile2" in descriptor
+    assert "/FontFile3" not in descriptor
+    # 幂等：已经修复过的字体描述不再改动
+    assert providers._relax_font_descriptors(reader) == 0
+
+
 def test_paddleocr_requires_endpoint_and_parses_response(monkeypatch, tmp_path):
     config = ExtractionConfig(upload_dir=tmp_path)
     with pytest.raises(ProviderError) as exc_info:
@@ -163,10 +277,11 @@ def test_multimodal_llm_disabled_and_configured(monkeypatch, tmp_path):
         )
     assert exc_info.value.code == "llm_disabled"
 
-    monkeypatch.setattr(
-        providers,
-        "_http_post_json",
-        lambda url, body, *, timeout, headers=None: {
+    captured: dict[str, object] = {}
+
+    def fake_post(url, body, *, timeout, headers=None):
+        captured["payload"] = json.loads(body)
+        return {
             "choices": [
                 {
                     "message": {
@@ -186,8 +301,9 @@ def test_multimodal_llm_disabled_and_configured(monkeypatch, tmp_path):
                     }
                 }
             ]
-        },
-    )
+        }
+
+    monkeypatch.setattr(providers, "_http_post_json", fake_post)
     enabled = ExtractionConfig(
         llm_enabled=True,
         llm_endpoint="http://llm.test/v1",
@@ -209,6 +325,56 @@ def test_multimodal_llm_disabled_and_configured(monkeypatch, tmp_path):
     assert result.prompt_version == "v2"
     assert result.fields["seller_name"] == "大模型商户"
     assert result.fields["total_cents"] == 11300
+
+    content = captured["payload"]["messages"][1]["content"]
+    assert content[0]["type"] == "text"
+    file_part = content[1]
+    assert file_part["type"] == "file"
+    assert file_part["file"]["filename"] == "invoice.pdf"
+    assert file_part["file"]["file_data"].startswith("data:application/pdf;base64,")
+
+
+def test_multimodal_llm_sends_images_as_image_url(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    def fake_post(url, body, *, timeout, headers=None):
+        captured["payload"] = json.loads(body)
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {"invoice_number": "24512000000012345678", "total_cents": 11300}
+                        )
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(providers, "_http_post_json", fake_post)
+    config = ExtractionConfig(
+        llm_enabled=True,
+        llm_endpoint="http://llm.test/v1",
+        llm_api_key="test-key",
+        llm_model="test-vl",
+        upload_dir=tmp_path,
+    )
+    image_path = tmp_path / "invoice.png"
+    image_path.write_bytes(b"\x89PNG\r\n")
+    providers.MultimodalLlmProvider().extract(
+        None,
+        SimpleNamespace(
+            storage_key="invoice.png",
+            original_name="../../invoice.png",
+            mime_type="image/png",
+        ),
+        config,
+        path=image_path,
+    )
+
+    image_part = captured["payload"]["messages"][1]["content"][1]
+    assert image_part["type"] == "image_url"
+    assert image_part["image_url"]["url"].startswith("data:image/png;base64,")
 
 
 def test_auto_chain_falls_back_to_paddleocr(monkeypatch, tmp_path):
@@ -236,6 +402,118 @@ def test_auto_chain_falls_back_to_paddleocr(monkeypatch, tmp_path):
     )
     assert result.provider == "paddleocr_local"
     assert result.fields["total_cents"] == 11300
+
+
+def test_auto_chain_fills_missing_fields_from_next_provider(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_pdf(self, document, version, config, *, path=None):
+        calls.append("pdf_text")
+        return providers.ExtractionResult(
+            provider="pdf_text",
+            fields={
+                "invoice_number": "26329330497000028545",
+                "issue_date": "2026-10-21",
+                "buyer_name": "上海电力大学",
+                "invoice_type": "电子发票(铁路电子客票)",
+            },
+            confidence=0.8,
+            field_confidence={
+                "invoice_number": 0.8,
+                "issue_date": 0.8,
+                "buyer_name": 0.8,
+            },
+            raw_text="plain text",
+        )
+
+    def fake_llm(self, document, version, config, *, path=None):
+        calls.append("multimodal_llm")
+        return providers.ExtractionResult(
+            provider="multimodal_llm",
+            fields={"total_cents": -6600, "seller_name": "大模型商户"},
+            confidence=0.7,
+            field_confidence={"total_cents": 0.7, "seller_name": 0.7},
+            raw_response={"source": "llm"},
+            model="test-vl",
+            prompt_version="v1",
+        )
+
+    monkeypatch.setattr(providers.PdfTextProvider, "extract", fake_pdf)
+    monkeypatch.setattr(providers.MultimodalLlmProvider, "extract", fake_llm)
+    config = ExtractionConfig(
+        provider=AUTO_PROVIDER,
+        auto_chain=("pdf_text", "multimodal_llm"),
+        llm_enabled=True,
+        llm_endpoint="http://llm.test/v1",
+        llm_api_key="test-key",
+        llm_model="test-vl",
+        upload_dir=tmp_path,
+    )
+
+    result = providers.run_provider_chain(
+        providers.provider_chain(config),
+        None,
+        SimpleNamespace(storage_key="x.pdf", mime_type="application/pdf"),
+        config,
+        path=_pdf_path(tmp_path),
+    )
+
+    assert calls == ["pdf_text", "multimodal_llm"]
+    assert result.provider == "pdf_text"
+    assert result.fields["total_cents"] == -6600
+    assert result.fields["buyer_name"] == "上海电力大学"
+    assert result.fields["seller_name"] == "大模型商户"
+    assert result.field_confidence["total_cents"] == 0.7
+    assert result.raw_text == "plain text"
+    assert result.raw_response == {"source": "llm"}
+    assert result.model == "test-vl"
+    assert result.prompt_version == "v1"
+
+
+def test_auto_chain_stops_when_required_fields_are_complete(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_pdf(self, document, version, config, *, path=None):
+        calls.append("pdf_text")
+        return providers.ExtractionResult(
+            provider="pdf_text",
+            fields={
+                "invoice_number": "26329330497000028545",
+                "issue_date": "2026-10-21",
+                "total_cents": 11300,
+            },
+            confidence=0.8,
+        )
+
+    def fake_llm(self, document, version, config, *, path=None):
+        calls.append("multimodal_llm")
+        return providers.ExtractionResult(
+            provider="multimodal_llm", fields={"seller_name": "大模型商户"}
+        )
+
+    monkeypatch.setattr(providers.PdfTextProvider, "extract", fake_pdf)
+    monkeypatch.setattr(providers.MultimodalLlmProvider, "extract", fake_llm)
+    config = ExtractionConfig(
+        provider=AUTO_PROVIDER,
+        auto_chain=("pdf_text", "multimodal_llm"),
+        llm_enabled=True,
+        llm_endpoint="http://llm.test/v1",
+        llm_api_key="test-key",
+        llm_model="test-vl",
+        upload_dir=tmp_path,
+    )
+
+    result = providers.run_provider_chain(
+        providers.provider_chain(config),
+        None,
+        SimpleNamespace(storage_key="x.pdf", mime_type="application/pdf"),
+        config,
+        path=_pdf_path(tmp_path),
+    )
+
+    assert calls == ["pdf_text"]
+    assert result.fields["total_cents"] == 11300
+    assert "seller_name" not in result.fields
 
 
 def test_unknown_provider_and_traversal(tmp_path):
@@ -308,6 +586,10 @@ def test_validate_parsed_rules(db_session):
     bad_total = {**valid, "total_cents": 12000}
     errors = validate_parsed(bad_total)["errors"]
     assert any("价税合计" in message for message in errors)
+
+    negative_total = {**valid, "total_cents": -6600}
+    errors = validate_parsed(negative_total)["errors"]
+    assert any("红冲" in message for message in errors)
 
     too_future = {**valid, "issue_date": (date.today() + timedelta(days=30)).isoformat()}
     warnings = validate_parsed(too_future)["warnings"]

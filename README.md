@@ -10,7 +10,7 @@
 
 - 角色与权限：admin / user；JWT access token（内存）+ HttpOnly refresh cookie 轮换；登录限流与锁定；首个管理员由 CLI 创建，不开放注册。
 - 文档：发票、付款凭证、收据上传；sha256 去重；版本只增不改；用户在线预览最新版，管理员可下载原文件与历史版本。
-- 识别：pdf_text（pypdf 文本层）、PaddleOCR HTTP、OpenAI 兼容多模态 LLM、mock；独立 worker 轮询 SQLite 队列，失败重试与退避。
+- 识别：pdf_text（pypdf 文本层）、PaddleOCR HTTP、OpenAI 兼容多模态 LLM、mock；支持铁路电子客票等版式票面，auto 链路会用后续引擎补齐缺失字段；独立 worker 轮询 SQLite 队列，失败重试与退避。
 - 审核：抽取结果必须人工审核；左右分栏对照原文件，字段置信度、校验错误、与上次结果 diff；通过后生成规范文件展示名。
 - 发票与付款：发票/明细 CRUD；付款与发票通过 payment_allocations 多对多分配；部分付款、老师代付；进入/撤销分配时重算两端状态。
 - 对账：按分配口径输出有票无付款、有付款未分配、缺凭证、明细差异、金额异常、日期异常等缺口，支持忽略与备注。
@@ -67,8 +67,8 @@ Vite 将 `/api` 代理到 `http://127.0.0.1:8000`。登录页使用上面创建�
 ### 测试与构建
 
 ```bash
-cd backend && uv run pytest -q          # 238 个测试
-cd frontend && pnpm test && pnpm build  # 69 个测试 + 类型检查 + 生产构建
+cd backend && uv run pytest -q          # 249 个测试
+cd frontend && pnpm test && pnpm build  # 72 个测试 + 类型检查 + 生产构建
 ```
 
 ## 目录

@@ -14,6 +14,7 @@ import logging
 import re
 import unicodedata
 import urllib.request
+from collections.abc import MutableMapping
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -26,6 +27,9 @@ from .config import AUTO_PROVIDER, ExtractionConfig
 from .normalize import normalize_fields
 
 logger = logging.getLogger(__name__)
+
+#: 调用外部识别服务时使用的显式 UA，避免被 CDN/WAF 按默认 Python UA 拦截
+USER_AGENT = "invoice-vault/1.0"
 
 
 class ProviderError(Exception):
@@ -83,9 +87,11 @@ _ISSUE_DATE_PATTERN = re.compile(
 _GENERIC_DATE_PATTERN = re.compile(
     r"(\d{4})\s*[年\-/.]\s*(\d{1,2})\s*[月\-/.]\s*(\d{1,2})"
 )
-_TOTAL_PATTERN = re.compile(r"价税合计[^\n]{0,40}?[¥￥]\s*(\d[\d,]*\.\d{2})")
+_TOTAL_PATTERN = re.compile(
+    r"(?:价税合计|票价)[^\n]{0,40}?[¥￥]\s*(-?\s*\d[\d,]*\.\d{2})"
+)
 _TOTAL_FALLBACK_PATTERN = re.compile(
-    r"(?:价税合计|合计金额|小写)[^\n]{0,40}?(\d[\d,]*\.\d{2})"
+    r"(?:价税合计|合计金额|小写|票价)[^\n]{0,40}?(-?\s*\d[\d,]*\.\d{2})"
 )
 _TAX_PATTERN = re.compile(r"税额\s*[:：]\s*" + _AMOUNT)
 _EX_TAX_PATTERN = re.compile(r"(?:不含税金额|合计金额|金额)\s*[:：]\s*" + _AMOUNT)
@@ -95,6 +101,10 @@ _SELLER_PATTERN = re.compile(
 _BUYER_PATTERN = re.compile(
     r"(?:购(?:买)?方(?:信息)?)[^\n]{0,30}?名称\s*[:：]\s*([^\n\s]+)"
 )
+_TAX_ID_PATTERN = re.compile(
+    r"(?:统一社会信用代码|纳税人识别号|税号)\s*[:：]\s*([0-9A-Z]{15,20})"
+)
+_PARTY_LABEL_PATTERN = re.compile(r"(购买方|购方|销售方|销方)")
 _ITEM_PATTERN = re.compile(
     r"^\*?([^\s]+)\s+(\d+(?:\.\d{1,3})?)\s+([\d,]+\.\d{1,3})\s+([\d,]+\.\d{2})"
     r"\s+(\d+(?:\.\d+)?)%\s+([\d,]+\.\d{2})\s*$",
@@ -104,9 +114,33 @@ _INVOICE_TYPE_PATTERN = re.compile(
     r"(电子发票(?:\([^)]*\))?|数电票|增值税专用发票|增值税普通发票)"
 )
 
+#: 普通模式缺失这些字段时，再用版式模式解析一遍并补齐
+_LAYOUT_RETRY_FIELDS: tuple[str, ...] = (
+    "invoice_number",
+    "issue_date",
+    "total_cents",
+    "seller_name",
+    "buyer_name",
+    "items",
+)
+
 
 def _amount_to_cents(raw: str) -> int:
-    return int(round(float(raw.replace(",", "")) * 100))
+    return int(round(float(re.sub(r"\s+", "", raw).replace(",", "")) * 100))
+
+
+def _parse_tax_ids(text: str) -> dict[str, str]:
+    """按最近的购/销方标签归属税号，避免买卖双方税号串位。"""
+
+    fields: dict[str, str] = {}
+    for match in _TAX_ID_PATTERN.finditer(text):
+        context = text[max(0, match.start() - 200) : match.start()]
+        labels = _PARTY_LABEL_PATTERN.findall(context)
+        key = "buyer_tax_id"
+        if labels and labels[-1].startswith("销"):
+            key = "seller_tax_id"
+        fields.setdefault(key, match.group(1))
+    return fields
 
 
 def parse_invoice_text(text: str) -> dict[str, Any]:
@@ -142,6 +176,7 @@ def parse_invoice_text(text: str) -> dict[str, Any]:
     match = _BUYER_PATTERN.search(normalized)
     if match is not None:
         fields["buyer_name"] = match.group(1).strip()
+    fields.update(_parse_tax_ids(normalized))
 
     match = _TOTAL_PATTERN.search(normalized) or _TOTAL_FALLBACK_PATTERN.search(normalized)
     if match is not None:
@@ -203,6 +238,9 @@ def _http_post_json(
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
+            # 不少 OpenAI 兼容网关挂在 Cloudflare 后面，会按 UA 拦截
+            # Python-urllib 默认标识（HTTP 403 / error code 1010）。
+            "User-Agent": USER_AGENT,
             **(dict(headers) if headers else {}),
         },
         method="POST",
@@ -299,6 +337,115 @@ class MockProvider(BaseProvider):
         )
 
 
+_FONT_FILE_KEYS = ("/FontFile", "/FontFile2", "/FontFile3")
+
+
+def _resolve_pdf_object(value: Any) -> Any:
+    """解引用 pypdf 的 IndirectObject；普通 dict 原样返回。"""
+
+    getter = getattr(value, "get_object", None)
+    if callable(getter):
+        try:
+            return getter()
+        except Exception:  # pragma: no cover - 损坏的间接引用
+            return value
+    return value
+
+
+def _font_descriptors(font: Mapping[str, Any]) -> list[Any]:
+    descriptors: list[Any] = []
+    direct = font.get("/FontDescriptor")
+    if direct is not None:
+        descriptors.append(direct)
+
+    descendants = _resolve_pdf_object(font.get("/DescendantFonts")) or ()
+    if not isinstance(descendants, (list, tuple)):
+        return descriptors
+    for descendant in descendants:
+        resolved = _resolve_pdf_object(descendant)
+        if not isinstance(resolved, Mapping):
+            continue
+        descriptor = resolved.get("/FontDescriptor")
+        if descriptor is not None:
+            descriptors.append(descriptor)
+    return descriptors
+
+
+def _relax_font_descriptors(reader: Any) -> int:
+    """容忍同时声明多个字体文件的 FontDescriptor，返回修复数量。
+
+    pypdf 6 遇到同一字体描述里同时有 /FontFile2 与 /FontFile3 会直接抛
+    PdfReadError，但部分电子发票 PDF 会把两个键指向同一个字体流。
+    这里只保留一个（优先 TrueType 的 /FontFile2），让文本层仍可读取。
+    """
+
+    patched = 0
+    seen: set[int] = set()
+    try:
+        pages = list(reader.pages)
+    except Exception:  # pragma: no cover - 无页面的损坏文件
+        return 0
+
+    for page in pages:
+        try:
+            resources = _resolve_pdf_object(page.get("/Resources", {}))
+            fonts = _resolve_pdf_object(resources.get("/Font", {})) if resources else {}
+            font_objects = list(fonts.values()) if hasattr(fonts, "values") else []
+        except Exception:  # pragma: no cover - 结构异常时保持原样
+            continue
+
+        for font_ref in font_objects:
+            font = _resolve_pdf_object(font_ref)
+            if not isinstance(font, Mapping):
+                continue
+            for descriptor_ref in _font_descriptors(font):
+                descriptor = _resolve_pdf_object(descriptor_ref)
+                if not isinstance(descriptor, MutableMapping):
+                    continue
+                if id(descriptor) in seen:
+                    continue
+                seen.add(id(descriptor))
+                present = [key for key in _FONT_FILE_KEYS if key in descriptor]
+                if len(present) <= 1:
+                    continue
+                keep = "/FontFile2" if "/FontFile2" in present else present[0]
+                for key in present:
+                    if key != keep:
+                        del descriptor[key]
+                patched += 1
+    return patched
+
+
+def _extract_pdf_text(
+    reader: Any, *, layout: bool = False
+) -> tuple[str, Exception | None]:
+    """逐页读取文本层，返回 (文本, 首个错误)。
+
+    单页字体/编码损坏不拖垮整份 PDF；layout=True 时按版面还原行，
+    便于“标签 + 金额”同行的票据（如铁路电子客票）被正则命中。
+    """
+
+    pages: list[str] = []
+    first_error: Exception | None = None
+    for index, page in enumerate(reader.pages, start=1):
+        try:
+            if layout:
+                try:
+                    page_text = page.extract_text(extraction_mode="layout")
+                except TypeError:
+                    # 页面对象不支持版式参数（测试替身或旧接口）
+                    return "", None
+            else:
+                page_text = page.extract_text()
+            pages.append(page_text or "")
+        except Exception as exc:
+            logger.warning("PDF 第 %s 页文本层读取失败：%s", index, exc)
+            if first_error is None:
+                first_error = exc
+            pages.append("")
+    return "\n".join(pages).strip(), first_error
+
+
 class PdfTextProvider(BaseProvider):
     """读取 PDF 文本层并用正则解析；无文本层或字段不足时抛出 ProviderError。"""
 
@@ -320,15 +467,44 @@ class PdfTextProvider(BaseProvider):
 
         try:
             reader = PdfReader(str(file_path))
-            pages = [page.extract_text() or "" for page in reader.pages]
         except Exception as exc:
             raise ProviderError("pdf_text_failed", f"读取 PDF 失败：{exc}") from exc
 
-        text = "\n".join(pages).strip()
+        _relax_font_descriptors(reader)
+
+        try:
+            text, first_error = _extract_pdf_text(reader)
+        except Exception as exc:
+            raise ProviderError("pdf_text_failed", f"读取 PDF 失败：{exc}") from exc
+
         if len(text) < 10:
+            if first_error is not None:
+                raise ProviderError(
+                    "pdf_text_failed", f"读取 PDF 文本层失败：{first_error}"
+                ) from first_error
             raise ProviderError("pdf_text_unavailable", "PDF 没有可用的文本层，请使用 OCR 引擎")
 
         fields = parse_invoice_text(text)
+        if any(not fields.get(key) for key in _LAYOUT_RETRY_FIELDS):
+            # 普通模式按内容流顺序输出，竖排/表格类 PDF 容易把标签与金额
+            # 拆散；此时再用版式模式补一次，只补缺失字段，已识别值优先。
+            layout_text, _ = _extract_pdf_text(reader, layout=True)
+            if layout_text and layout_text != text:
+                layout_fields = parse_invoice_text(layout_text)
+                merged = False
+                for key, value in layout_fields.items():
+                    if value is None or value == "" or value == []:
+                        continue
+                    if key == "items":
+                        if not fields.get("items"):
+                            fields["items"] = value
+                            merged = True
+                    elif key not in fields:
+                        fields[key] = value
+                        merged = True
+                if merged:
+                    text = layout_text
+
         if not fields.get("invoice_number") and not fields.get("total_cents"):
             raise ProviderError("pdf_text_insufficient", "PDF 文本层未解析出发票字段")
 
@@ -551,6 +727,23 @@ class MultimodalLlmProvider(BaseProvider):
         endpoint = config.llm_endpoint.rstrip("/")
         if not endpoint.endswith("/chat/completions"):
             endpoint = endpoint + "/chat/completions"
+        mime_type = (version.mime_type or "application/octet-stream").lower()
+        data_uri = f"data:{mime_type};base64,{encoded}"
+        if mime_type.startswith("image/"):
+            media_part: dict[str, Any] = {
+                "type": "image_url",
+                "image_url": {"url": data_uri},
+            }
+        else:
+            # OpenAI 兼容接口只接受图片走 image_url；PDF 必须用 file 内容块，
+            # 否则网关会报 invalid_media（把 PDF 当作图片解码）。
+            filename = Path(str(version.original_name or "")).name
+            if not filename:
+                filename = "invoice.pdf" if mime_type == "application/pdf" else "document"
+            media_part = {
+                "type": "file",
+                "file": {"filename": filename, "file_data": data_uri},
+            }
         payload = {
             "model": config.llm_model,
             "temperature": 0,
@@ -561,12 +754,7 @@ class MultimodalLlmProvider(BaseProvider):
                     "role": "user",
                     "content": [
                         {"type": "text", "text": "请识别这张发票，按要求返回 JSON。"},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{version.mime_type};base64,{encoded}"
-                            },
-                        },
+                        media_part,
                     ],
                 },
             ],
@@ -621,6 +809,52 @@ def provider_chain(config: ExtractionConfig) -> tuple[str, ...]:
     return (config.provider,)
 
 
+_REQUIRED_CHAIN_FIELDS = ("invoice_number", "issue_date", "total_cents")
+
+
+def _chain_complete(fields: Mapping[str, Any]) -> bool:
+    return all(fields.get(key) not in (None, "") for key in _REQUIRED_CHAIN_FIELDS)
+
+
+def _merge_chain_result(
+    primary: ExtractionResult, extra: ExtractionResult
+) -> ExtractionResult:
+    """用后续引擎补齐 primary 缺失的字段；已有值保持优先。"""
+
+    fields = dict(primary.fields)
+    field_confidence = dict(primary.field_confidence)
+    merged = False
+    for key, value in extra.fields.items():
+        if value in (None, "", []):
+            continue
+        if key == "items":
+            if fields.get("items"):
+                continue
+        elif fields.get(key) not in (None, ""):
+            continue
+        fields[key] = value
+        field_confidence[key] = extra.field_confidence.get(key, extra.confidence)
+        merged = True
+    if not merged:
+        return primary
+    added = ", ".join(sorted(set(fields) - set(primary.fields)))
+    logger.info("识别结果由 %s 补齐字段：%s", extra.provider, added)
+    return ExtractionResult(
+        provider=primary.provider,
+        fields=fields,
+        confidence=max(primary.confidence, extra.confidence),
+        field_confidence=field_confidence,
+        raw_text=primary.raw_text or extra.raw_text,
+        raw_response=(
+            primary.raw_response
+            if primary.raw_response is not None
+            else extra.raw_response
+        ),
+        model=primary.model or extra.model,
+        prompt_version=primary.prompt_version or extra.prompt_version,
+    )
+
+
 def run_provider_chain(
     chain: tuple[str, ...] | list[str],
     document: Document | None,
@@ -629,13 +863,18 @@ def run_provider_chain(
     *,
     path: Path | None = None,
 ) -> ExtractionResult:
-    """按链路依次尝试；单 provider 失败时保留原始错误码。"""
+    """按链路依次尝试；单 provider 失败时保留原始错误码。
+
+    某个引擎成功但缺少发票号码/开票日期/价税合计时，继续尝试后续引擎并
+    补齐缺失字段，避免 pdf_text 只认出一半就停止。
+    """
 
     names = tuple(chain)
     if not names:
         raise ProviderError("provider_failed", "没有可用的识别引擎")
     errors: list[str] = []
     single = len(names) == 1
+    merged: ExtractionResult | None = None
     for name in names:
         provider = get_provider(name)
         if not provider.is_configured(config):
@@ -644,11 +883,17 @@ def run_provider_chain(
             errors.append(f"{name}: 未配置")
             continue
         try:
-            return provider.extract(document, version, config, path=path)
+            result = provider.extract(document, version, config, path=path)
         except ProviderError as exc:
             logger.warning("识别引擎 %s 失败：%s", name, exc.message)
             if single:
                 raise
             errors.append(f"{name}: {exc.message}")
+            continue
+        merged = result if merged is None else _merge_chain_result(merged, result)
+        if _chain_complete(merged.fields):
+            return merged
+    if merged is not None:
+        return merged
     detail = "；".join(errors) if errors else "没有可用的识别引擎"
     raise ProviderError("provider_failed", f"识别失败：{detail}")
