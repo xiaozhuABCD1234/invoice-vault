@@ -25,6 +25,25 @@ DEFAULT_AUTO_CHAIN: tuple[str, ...] = (
 )
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
+#: 配置项逻辑名（DB / 前端表单使用的键）与对应环境变量
+SETTING_ENV: dict[str, str] = {
+    "provider": "IV_EXTRACTION_PROVIDER",
+    "auto_chain": "IV_EXTRACTION_AUTO_CHAIN",
+    "paddleocr_endpoint": "IV_PADDLEOCR_ENDPOINT",
+    "llm_endpoint": "IV_LLM_ENDPOINT",
+    "llm_api_key": "IV_LLM_API_KEY",
+    "llm_model": "IV_LLM_MODEL",
+    "llm_enabled": "IV_LLM_ENABLED",
+    "prompt_version": "IV_EXTRACTION_PROMPT_VERSION",
+    "http_timeout": "IV_EXTRACTION_HTTP_TIMEOUT",
+    "max_attempts": "IV_EXTRACTION_MAX_ATTEMPTS",
+    "stale_minutes": "IV_EXTRACTION_STALE_MINUTES",
+    "backoff_seconds": "IV_EXTRACTION_BACKOFF_SECONDS",
+}
+
+#: 全部可配置项，顺序与前端表单一致
+SETTING_KEYS: tuple[str, ...] = tuple(SETTING_ENV)
+
 
 def _parse_bool(value: str | None, default: bool = False) -> bool:
     if value is None or value.strip() == "":
@@ -122,13 +141,47 @@ def _environment(environ: Mapping[str, str] | None) -> Mapping[str, str]:
     return env
 
 
+def base_environment(environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """进程环境 + backend/.env（进程环境优先）。用于判断某个配置项的来源。"""
+
+    return dict(_environment(environ))
+
+
+def _render_override(value: Any) -> str:
+    """把数据库里的 JSON 值渲染成等价字符串；None 渲染为空串（= 显式清空）。"""
+
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item) for item in value)
+    return str(value)
+
+
+def _apply_overrides(env: dict[str, str], overrides: Mapping[str, Any]) -> None:
+    """数据库覆盖层优先于进程环境与 .env；空值同样覆盖（表示管理员清空）。"""
+
+    for name, value in overrides.items():
+        env_name = SETTING_ENV.get(name)
+        if env_name is not None:
+            env[env_name] = _render_override(value)
+
+
 def load_config(
     environ: Mapping[str, str] | None = None,
     settings: Settings | None = None,
+    *,
+    overrides: Mapping[str, Any] | None = None,
 ) -> ExtractionConfig:
-    """从环境变量（含 backend/.env）读取配置；每次调用重新读取，便于测试 monkeypatch。"""
+    """读取配置：默认值 < backend/.env < 进程环境 < overrides（数据库覆盖层）。
+
+    每次调用重新读取，便于测试 monkeypatch；overrides 的键见 SETTING_KEYS。
+    """
 
     env = _environment(environ)
+    if overrides:
+        _apply_overrides(env, overrides)
     raw_provider = (env.get("IV_EXTRACTION_PROVIDER") or DEFAULT_PROVIDER).strip().lower()
     provider = raw_provider if raw_provider in ALLOWED_PROVIDERS else DEFAULT_PROVIDER
 

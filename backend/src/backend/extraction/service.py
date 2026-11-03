@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from ..app_settings.service import effective_extraction_config
 from ..models.document import Document, DocumentVersion
 from ..models.extraction import ExtractionJob
 from ..models.user import User
@@ -18,7 +19,7 @@ from ..shared.enums import ExtractionStatus, ReviewDecision, Role
 from ..shared.errors import BadRequestError, ConflictError, NotFoundError
 from ..shared.pagination import paginate
 from . import providers
-from .config import ExtractionConfig, load_config
+from .config import ExtractionConfig
 from .normalize import aggregate_confidence, normalize_fields, validate_parsed
 
 logger = logging.getLogger(__name__)
@@ -156,7 +157,7 @@ def process_job(
     无论置信度高低都进入 review_pending；失败由 worker 控制重试。
     """
 
-    cfg = config or load_config(settings=settings)
+    cfg = config or effective_extraction_config(db, settings)
     job = db.get(ExtractionJob, job_id)
     if job is None:
         raise NotFoundError("job_not_found", "抽取任务不存在")

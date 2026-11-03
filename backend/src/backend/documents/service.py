@@ -11,7 +11,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from ..extraction.config import ExtractionConfig, load_config
+from ..app_settings.service import effective_extraction_config
+from ..extraction.config import ExtractionConfig
 from ..extraction.service import enqueue_job, latest_job_for_document
 from ..models.document import Document, DocumentVersion
 from ..models.extraction import ExtractionJob
@@ -125,7 +126,7 @@ def create_document(
         max_bytes=settings.max_upload_bytes,
     )
     saved = save_bytes(data, detected.extension, settings=settings)
-    cfg = config or load_config(settings=settings)
+    cfg = config or effective_extraction_config(db, settings)
 
     existing = _find_version_by_sha(db, saved["sha256"])
     if existing is not None:

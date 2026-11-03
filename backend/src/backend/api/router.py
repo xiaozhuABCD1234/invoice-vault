@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from ..app_settings.router import router as app_settings_router
 from ..audit.router import router as audit_router
 from ..auth.router import router as auth_router
 from ..categories.router import router as categories_router
@@ -37,3 +38,4 @@ api_router.include_router(reconciliation_router, tags=["reconciliation"])
 api_router.include_router(reports_router, tags=["reports"])
 api_router.include_router(dashboard_router, tags=["dashboard"])
 api_router.include_router(audit_router)
+api_router.include_router(app_settings_router)

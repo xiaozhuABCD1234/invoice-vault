@@ -298,6 +298,7 @@ frontend/src/
 | M3 | 报表模板与导出 | `/exports` |
 | M3 | 仪表盘 | `/dashboard` |
 | M3 | 用户管理 / 审计日志 | `/admin/users`、`/admin/audit` |
+| M3 | 识别设置（引擎、链路、超时与版本回滚） | `/admin/settings` |
 
 ## 15. 交付前检查清单
 

@@ -15,14 +15,22 @@ withDefaults(
 )
 
 const model = defineModel<boolean>({ default: false })
+
+defineSlots<{
+  /** 标签右侧的补充信息（如配置来源标记）。 */
+  'label-extra'?: () => unknown
+}>()
 </script>
 
 <template>
   <div class="flex items-start justify-between gap-4">
     <div class="min-w-0">
-      <label :for="id" class="block text-body font-medium text-text">
-        {{ label }}
-      </label>
+      <div class="flex flex-wrap items-center gap-2">
+        <label :for="id" class="block text-body font-medium text-text">
+          {{ label }}
+        </label>
+        <slot name="label-extra" />
+      </div>
       <p
         v-if="description"
         :id="`${id}-description`"

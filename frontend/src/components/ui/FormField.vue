@@ -25,6 +25,8 @@ defineSlots<{
     invalid: boolean
     describedBy: string | undefined
   }) => unknown
+  /** 标签右侧的补充信息（如配置来源标记）。 */
+  'label-extra'?: () => unknown
 }>()
 
 const hintId = computed(() => `${props.id}-hint`)
@@ -40,7 +42,10 @@ const describedBy = computed(() => {
 
 <template>
   <div class="space-y-1">
-    <Label :for="id" :required="required">{{ label }}</Label>
+    <div class="flex items-center justify-between gap-2">
+      <Label :for="id" :required="required">{{ label }}</Label>
+      <slot name="label-extra" />
+    </div>
     <slot
       :id="id"
       :invalid="Boolean(error)"

@@ -6,6 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
+from ..app_settings.service import effective_extraction_config
 from ..schemas.common import Page
 from ..schemas.document import DocumentOut
 from ..schemas.extraction import (
@@ -18,7 +19,6 @@ from ..shared.enums import ExtractionProvider, ExtractionStatus
 from ..shared.errors import ForbiddenError
 from ..shared.pagination import PageParams
 from . import service
-from .config import load_config
 
 router = APIRouter(prefix="/extraction-jobs", tags=["extraction"])
 
@@ -74,7 +74,7 @@ def retry_extraction_job(
     job = service.get_job_or_404(db, job_id)
     if not service.can_manage_job(job, current_user):
         raise ForbiddenError("forbidden", "只能重试自己上传的任务")
-    config = load_config(settings=settings)
+    config = effective_extraction_config(db, settings)
     job = service.retry_job(db, job, actor=current_user, config=config, request=ctx)
     return ExtractionJobOut.model_validate(job)
 

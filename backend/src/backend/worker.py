@@ -20,7 +20,8 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from .extraction.config import ExtractionConfig, load_config
+from .app_settings.service import effective_extraction_config
+from .extraction.config import ExtractionConfig
 from .extraction.service import QUEUED, RUNNING, process_job
 from .models.extraction import ExtractionJob
 from .shared.config import Settings, get_settings
@@ -83,7 +84,7 @@ def run_once(
 ) -> ExtractionJob | None:
     """处理一轮：取 1 个到期任务并执行；没有任务时返回 None。"""
 
-    cfg = config or load_config(settings=settings)
+    cfg = config or effective_extraction_config(db, settings)
     job = next_job(db)
     if job is None:
         return None
@@ -117,19 +118,22 @@ def main(
     current: Any = settings or get_settings()
     if args.database_url:
         current = current.model_copy(update={"database_url": args.database_url})
-    cfg = config or load_config(settings=current)
     engine = create_engine_for(current.database_url, echo=current.sql_echo)
     init_db(engine, current)
     factory = get_session_factory(engine)
+    with factory() as db:
+        startup_config = config or effective_extraction_config(db, current)
     try:
         with factory() as db:
-            recovered = reset_stale_running(db, stale_minutes=cfg.stale_minutes)
+            recovered = reset_stale_running(
+                db, stale_minutes=startup_config.stale_minutes
+            )
         if recovered:
             logger.info("已将 %s 个超时 running 任务改回 queued", recovered)
 
         if args.once:
             with factory() as db:
-                job = run_once(db, settings=current, config=cfg)
+                job = run_once(db, settings=current, config=config)
             if job is None:
                 logger.info("--once：没有待处理任务")
             else:
@@ -138,13 +142,14 @@ def main(
 
         logger.info(
             "worker 启动：provider=%s，interval=%ss",
-            cfg.provider,
+            startup_config.provider,
             args.interval,
         )
         while True:
             try:
+                # 每轮重新读取配置，管理端改动对下一个任务生效
                 with factory() as db:
-                    job = run_once(db, settings=current, config=cfg)
+                    job = run_once(db, settings=current, config=config)
                 if job is not None:
                     logger.info("任务 %s 处理完成：%s", job.id, job.status)
                 else:

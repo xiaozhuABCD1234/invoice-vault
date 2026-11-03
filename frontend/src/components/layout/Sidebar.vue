@@ -11,6 +11,7 @@ import {
   ReceiptText,
   Scale,
   ScrollText,
+  SlidersHorizontal,
   Upload,
   Users,
   Wallet,
@@ -61,6 +62,7 @@ const mainNav: NavItem[] = [
 const adminNav: NavItem[] = [
   { label: '用户管理', to: '/admin/users', icon: Users },
   { label: '审计日志', to: '/admin/audit', icon: ScrollText },
+  { label: '识别设置', to: '/admin/settings', icon: SlidersHorizontal },
 ]
 
 const visibleAdminNav = computed(() => (auth.isAdmin ? adminNav : []))

@@ -1,2 +1,1 @@
-def main() -> None:
-    print("Hello from backend!")
+"""发票管理系统后端包。"""

@@ -228,7 +228,46 @@ AuditLog: `{ id, actor_id, actor_name, action, entity_type, entity_id, before, a
 `entity_id` 为字符串（兼容数字 ID 与对账 issue_key）。
 - `GET /audit-logs?page&page_size&action&entity_type&entity_id&actor_id&date_from&date_to`
 
-## 11. 前端路由 ↔ 接口对应
+## 11. 识别引擎设置（admin）
+
+优先级：代码默认值 < `backend/.env` < 进程环境变量 < `app_settings` 表（数据库覆盖层）。
+保存后对新任务即时生效（worker / 重试 / 上传入队每次都重新读取），无需重启进程。
+
+ExtractionSettings：
+```json
+{
+  "values": {
+    "provider": "pdf_text", "auto_chain": ["pdf_text", "paddleocr_local"],
+    "paddleocr_endpoint": null, "llm_endpoint": null, "llm_model": null, "llm_enabled": false,
+    "llm_api_key_set": false, "llm_api_key_hint": null,
+    "prompt_version": "v1", "http_timeout": 10.0, "max_attempts": 3,
+    "stale_minutes": 15, "backoff_seconds": 30.0
+  },
+  "sources": { "provider": "database", "http_timeout": "env", "backoff_seconds": "default" },
+  "revision_id": 3, "updated_at": "...", "updated_by": "系统管理员"
+}
+```
+`sources` 取值：`database`（数据库覆盖层）、`env`（进程环境或 .env）、`default`（代码默认值）。
+API Key 只回显掩码（如 `••••1234`），任何接口都不返回明文。
+
+- `GET /admin/settings/extraction` → ExtractionSettings
+- `PUT /admin/settings/extraction` body：
+  `{ provider, auto_chain, paddleocr_endpoint, llm_endpoint, llm_model, llm_enabled, llm_api_key?, prompt_version, http_timeout, max_attempts, stale_minutes, backoff_seconds }`
+  - `provider`：`auto` | `pdf_text` | `paddleocr_local` | `multimodal_llm` | `mock`；`auto_chain` 至少 1 项、不可重复
+  - `llm_api_key` 缺省 = 保持不变；`null` 或 `""` = 清除；其余 = 覆盖
+    - 若数据库从未保存过 Key，缺省时不会落库（不会把环境变量中的 Key 复制进数据库），继续沿用环境变量，来源仍为 `env`
+    - 若数据库已有 Key（含显式清空的 `null`），缺省时沿用数据库记录，避免保存其他字段时意外恢复环境变量中的旧 Key
+  - `llm_enabled=true` 但接口/模型名/Key 缺一 → 400 `llm_config_incomplete`（details.missing）
+  - `provider=multimodal_llm` 但未启用大模型 → 400 `llm_disabled`
+  - 写入审计 `settings.extraction.update`（before/after 中的 Key 为掩码）
+- `DELETE /admin/settings/extraction` → 清空覆盖层（回到 .env / 默认值），审计 `settings.extraction.reset`
+- `GET /admin/settings/extraction/history?limit=20` → `{ items: [{ id, action, actor_name, created_at, values }] }`，`action` 为 `update` | `rollback` | `reset`
+- `POST /admin/settings/extraction/rollback` body `{ revision_id }` → ExtractionSettings
+  - 按快照整体替换覆盖层，并新增一条 `action=rollback` 版本；审计 `settings.extraction.rollback`
+  - 版本不存在 → 404 `settings_revision_not_found`
+  - 快照不再满足当前校验（如环境变量中的 Key 已移除）→ 400 `llm_config_incomplete` / `llm_disabled`
+
+## 12. 前端路由 ↔ 接口对应
 
 | 路由 | 接口 |
 |---|---|
@@ -242,3 +281,4 @@ AuditLog: `{ id, actor_id, actor_name, action, entity_type, entity_id, before, a
 | /dashboard | dashboard/summary |
 | /admin/users | users、categories |
 | /admin/audit | audit-logs |
+| /admin/settings | admin/settings/extraction、history、rollback |

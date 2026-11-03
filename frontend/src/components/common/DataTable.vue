@@ -28,6 +28,8 @@ const props = withDefaults(
     empty?: string
     emptyDescription?: string
     selectedKey?: string | number | null
+    /** 宽表格在卡片内部横向滚动；设置后表格不会被压扁。 */
+    minWidth?: number
   }>(),
   {
     loading: false,
@@ -36,6 +38,7 @@ const props = withDefaults(
     empty: '暂无数据',
     emptyDescription: '',
     selectedKey: null,
+    minWidth: 0,
   },
 )
 
@@ -150,7 +153,10 @@ const columnCount = computed(() => props.columns.length)
     v-else
     class="w-full overflow-x-auto rounded-card border border-border bg-surface"
   >
-    <table class="w-full border-collapse text-table text-text">
+    <table
+      class="w-full border-collapse text-table text-text"
+      :style="minWidth > 0 ? { minWidth: `${minWidth}px` } : undefined"
+    >
       <thead>
         <tr>
           <th

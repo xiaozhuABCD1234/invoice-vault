@@ -735,3 +735,81 @@ export interface AuditLogListQuery {
   date_from?: string
   date_to?: string
 }
+
+// ---------------------------------------------------------------------------
+// 识别引擎设置（admin）
+// ---------------------------------------------------------------------------
+
+export type ExtractionProviderName =
+  | 'pdf_text'
+  | 'paddleocr_local'
+  | 'multimodal_llm'
+  | 'mock'
+
+export type ExtractionProviderSetting = 'auto' | ExtractionProviderName
+
+export type ExtractionSettingSource = 'database' | 'env' | 'default'
+
+export type ExtractionSettingKey =
+  | 'provider'
+  | 'auto_chain'
+  | 'paddleocr_endpoint'
+  | 'llm_endpoint'
+  | 'llm_api_key'
+  | 'llm_model'
+  | 'llm_enabled'
+  | 'prompt_version'
+  | 'http_timeout'
+  | 'max_attempts'
+  | 'stale_minutes'
+  | 'backoff_seconds'
+
+export interface ExtractionSettingsValues {
+  provider: ExtractionProviderSetting
+  auto_chain: ExtractionProviderName[]
+  paddleocr_endpoint: string | null
+  llm_endpoint: string | null
+  llm_model: string | null
+  llm_enabled: boolean
+  llm_api_key_set: boolean
+  llm_api_key_hint: string | null
+  prompt_version: string
+  http_timeout: number
+  max_attempts: number
+  stale_minutes: number
+  backoff_seconds: number
+}
+
+export interface ExtractionSettings {
+  values: ExtractionSettingsValues
+  sources: Record<ExtractionSettingKey, ExtractionSettingSource>
+  revision_id: number | null
+  updated_at: string | null
+  updated_by: string | null
+}
+
+/** llm_api_key 缺省 = 保持不变；null = 清除。 */
+export interface ExtractionSettingsUpdate {
+  provider: ExtractionProviderSetting
+  auto_chain: ExtractionProviderName[]
+  paddleocr_endpoint: string | null
+  llm_endpoint: string | null
+  llm_model: string | null
+  llm_enabled: boolean
+  llm_api_key?: string | null
+  prompt_version: string
+  http_timeout: number
+  max_attempts: number
+  stale_minutes: number
+  backoff_seconds: number
+}
+
+export type ExtractionSettingsRevisionAction = 'update' | 'rollback' | 'reset'
+
+export interface ExtractionSettingsRevision {
+  id: number
+  action: ExtractionSettingsRevisionAction
+  actor_name: string | null
+  created_at: string
+  values: JsonObject
+}

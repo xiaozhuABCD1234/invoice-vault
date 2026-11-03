@@ -16,15 +16,20 @@ frontend/dist/
 frontend/.vite/
 *.tsbuildinfo
 
+# 本地环境变量（可能含数据库口令、API Key，禁止提交）
+.env
+.env.local
+
 # Runtime data
 data/
 *.sqlite3
 *.db
 *.log
 
-# Agent worktrees
+# Agent worktrees / harness temp
 .worktrees/
 .agent/
+.dsh-tmp/
 
 # OS / editor
 .DS_Store

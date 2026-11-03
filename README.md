@@ -52,6 +52,8 @@ uv run python -m backend.worker --once     # 处理一轮，适合调试
 IV_EXTRACTION_PROVIDER=mock uv run python -m backend.worker --once
 ```
 
+识别引擎也可以在管理端「识别设置」（`/admin/settings`）里改：provider、自动链路、PaddleOCR / 大模型地址与密钥、超时与重试参数。保存后写入数据库并优先于 `.env` 与进程环境变量，对下一个任务立即生效（worker 每轮重新读取），每次变更都有审计与版本记录，可一键回滚。
+
 ### 前端（端口 5173）
 
 ```bash
@@ -65,8 +67,8 @@ Vite 将 `/api` 代理到 `http://127.0.0.1:8000`。登录页使用上面创建�
 ### 测试与构建
 
 ```bash
-cd backend && uv run pytest -q          # 210 个测试
-cd frontend && pnpm test && pnpm build  # 52 个测试 + 类型检查 + 生产构建
+cd backend && uv run pytest -q          # 238 个测试
+cd frontend && pnpm test && pnpm build  # 69 个测试 + 类型检查 + 生产构建
 ```
 
 ## 目录
@@ -80,6 +82,7 @@ backend/
     auth/ users/ categories/
     documents/     # 上传、版本、预览/下载、规范命名
     extraction/    # provider、规范化、任务处理
+    app_settings/  # 识别设置覆盖层、版本历史与回滚
     invoices/      # 发票、明细、审核通过
     payments/      # 付款、分配、状态重算
     reconciliation/# 对账口径、缺口
@@ -117,6 +120,7 @@ docs/API_CONTRACT.md
 - web 与 worker 共用同一个数据库文件和 uploads 目录；worker 保持单实例（一次处理 1 个任务）。
 - 每天做 SQLite 在线备份 + uploads 增量备份，并定期演练恢复。
 - 云端 LLM 会把发票图片发送到外部，默认关闭；默认使用本地 PaddleOCR/pdf_text。
+- 管理端保存的 LLM API Key 以明文存入 SQLite（接口与审计只返回掩码）；请限制数据库、备份文件权限，优先使用环境变量或密钥管理服务。
 
 ## 范围边界
 
