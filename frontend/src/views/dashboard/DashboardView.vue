@@ -11,6 +11,7 @@ import {
   buildCategoryOption,
   buildMonthOption,
   buildPayerOption,
+  estimateBarChartHeight,
 } from '@/components/dashboard/dashboard-charts'
 import { useDashboard } from '@/composables/useDashboard'
 
@@ -38,6 +39,20 @@ const monthOption = computed(() =>
 )
 const payerOption = computed(() =>
   payers.value.length > 0 ? buildPayerOption(payers.value) : null,
+)
+
+// 按条目数估算高度：保证分类/付款人名称不会被 ECharts 自动省略。
+const categoryChartHeight = computed(() =>
+  estimateBarChartHeight(
+    categories.value.map((item) => item.name),
+    320,
+  ),
+)
+const payerChartHeight = computed(() =>
+  estimateBarChartHeight(
+    payers.value.map((item) => item.payer_name),
+    288,
+  ),
 )
 </script>
 
@@ -73,10 +88,11 @@ const payerOption = computed(() =>
       <div class="mt-6 grid gap-6 xl:grid-cols-2">
         <DashboardChartCard
           title="按类别开票金额"
-          description="按金额降序，长名称悬停查看全文。"
+          description="按金额降序，完整显示类别名称。"
           :option="categoryOption"
           :empty="!loading && categories.length === 0"
           :loading="loading"
+          :height="categoryChartHeight"
           export-name="按类别开票金额"
           @retry="reload"
         />
@@ -87,6 +103,7 @@ const payerOption = computed(() =>
           :option="monthOption"
           :empty="!loading && months.length === 0"
           :loading="loading"
+          :height="categoryChartHeight"
           export-name="按月份开票金额趋势"
           @retry="reload"
         />
@@ -98,8 +115,8 @@ const payerOption = computed(() =>
           :option="payerOption"
           :empty="!loading && payers.length === 0"
           :loading="loading"
+          :height="payerChartHeight"
           export-name="按付款人付款金额"
-          height-class="h-72"
           @retry="reload"
         />
       </div>

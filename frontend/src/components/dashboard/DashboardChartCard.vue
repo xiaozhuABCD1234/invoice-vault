@@ -21,6 +21,8 @@ const props = withDefaults(
     error?: string | null
     exportName: string
     heightClass?: string
+    /** 按条目数计算的实际高度（px）；设置后覆盖 heightClass，避免标签被省略。 */
+    height?: number
   }>(),
   {
     description: '',
@@ -28,6 +30,7 @@ const props = withDefaults(
     loading: false,
     error: null,
     heightClass: 'h-80',
+    height: 0,
   },
 )
 
@@ -39,6 +42,9 @@ const chartRef = ref<InstanceType<typeof VChart> | null>(null)
 const ready = ref(false)
 
 const chartOption = computed<EChartsOption>(() => props.option ?? {})
+const chartStyle = computed(() =>
+  props.height > 0 ? { height: `${props.height}px` } : undefined,
+)
 const canExport = computed(
   () =>
     ready.value &&
@@ -113,6 +119,7 @@ function exportImage(): void {
       <div
         v-if="loading"
         :class="heightClass"
+        :style="chartStyle"
         class="flex items-end gap-2"
         role="status"
         aria-live="polite"
@@ -139,7 +146,7 @@ function exportImage(): void {
         description="当前日期范围内没有可展示的数据。"
       />
 
-      <div v-else :class="heightClass" class="w-full">
+      <div v-else :class="heightClass" :style="chartStyle" class="w-full">
         <VChart
           ref="chartRef"
           :option="chartOption"

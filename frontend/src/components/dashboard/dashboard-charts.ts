@@ -72,19 +72,25 @@ export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => replacements[character] ?? character)
 }
 
-function truncateLabel(value: string, maxLength = 12): string {
-  const characters = Array.from(value)
-  return characters.length > maxLength
-    ? `${characters.slice(0, maxLength).join('')}…`
-    : value
-}
-
 function moneyAxisFormatter(value: string | number): string {
   return formatCents(Number(value))
 }
 
-function categoryAxisFormatter(value: string | number): string {
-  return truncateLabel(String(value))
+const ROW_HEIGHT = 28
+const CHART_VERTICAL_PADDING = 48
+
+/**
+ * 按条目数估算横向条形图高度：每个类目至少 28px，
+ * 保证 ECharts 有足够空间显示全部名称，而不是自动隔行省略。
+ */
+export function estimateBarChartHeight(
+  names: readonly string[],
+  minHeight: number,
+): number {
+  return Math.max(
+    minHeight,
+    names.length * ROW_HEIGHT + CHART_VERTICAL_PADDING,
+  )
 }
 
 function numericValue(value: unknown): number | null {
@@ -158,7 +164,7 @@ function baseTooltip(theme: ChartTheme, valueLabel: string) {
 }
 
 function baseGrid() {
-  return { left: 8, right: 24, top: 16, bottom: 8, containLabel: true }
+  return { left: 8, right: 36, top: 16, bottom: 8, containLabel: true }
 }
 
 function valueAxis(theme: ChartTheme) {
@@ -195,8 +201,9 @@ function horizontalBarOption(
       {
         query: { maxWidth: 520 },
         option: {
-          grid: { bottom: 28 },
-          xAxis: { axisLabel: { rotate: 30 } },
+          grid: { right: 36, bottom: 36 },
+          // 窄屏减少金额刻度数量，避免旋转后的标签互相遮挡。
+          xAxis: { splitNumber: 2, axisLabel: { rotate: 30 } },
         },
       },
     ],
@@ -209,7 +216,8 @@ function horizontalBarOption(
       axisLabel: {
         color: theme.textSecondary,
         fontSize: 12,
-        formatter: categoryAxisFormatter,
+        // 显示完整名称：不截断，也不让 ECharts 自动隔行省略。
+        interval: 0,
       },
       axisLine: { lineStyle: { color: theme.border } },
       axisTick: { show: false },
@@ -230,7 +238,7 @@ function horizontalBarOption(
   }
 }
 
-/** 按类别开票金额：金额降序的横向条形图，长名称截断并交给 tooltip 展示全文。 */
+/** 按类别开票金额：金额降序的横向条形图，完整显示类别名称。 */
 export function buildCategoryOption(
   rows: DashboardCategorySummary[],
 ): EChartsOption {
